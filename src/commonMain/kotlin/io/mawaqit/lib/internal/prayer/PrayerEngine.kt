@@ -94,7 +94,7 @@ internal object PrayerEngine {
         val fajrHANext = run {
             val latR = coords.latitude.toRadians()
             val decR = sunNext.declination.toRadians()
-            val cosHA = (sin(params.fajrAngle.toRadians()) - sin(latR) * sin(decR)) /
+            val cosHA = (sin((-params.fajrAngle).toRadians()) - sin(latR) * sin(decR)) /
                     (cos(latR) * cos(decR))
             if (cosHA > 1.0 || cosHA < -1.0) Double.NaN
             else acos(cosHA.coerceIn(-1.0, 1.0)).toDegrees()
