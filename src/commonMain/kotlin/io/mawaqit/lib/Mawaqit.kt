@@ -23,7 +23,7 @@ import kotlinx.datetime.LocalDate
  * println(day[PrayerEvent.QIYAM]) // Qiyam as Instant?
  * ```
  */
-object Mawaqit {
+object Mawaqit : PrayerCalculator {
 
     /**
      * Calculate all prayer times for a given date and location.
@@ -37,14 +37,14 @@ object Mawaqit {
      * @param adjustments per-event minute offsets applied on top of method defaults
      * @return [PrayerDay] containing all 14 prayer event times as UTC [kotlinx.datetime.Instant]
      */
-    fun calculate(
+    override fun calculate(
         date: LocalDate,
         coordinates: Coordinates,
-        method: CalculationMethod = CalculationMethod.MWL,
-        asrJuristic: AsrJuristic = AsrJuristic.STANDARD,
-        highLatitudeRule: HighLatitudeRule = HighLatitudeRule.MIDDLE_OF_NIGHT,
-        suhurOffsetMinutes: Int = 10,
-        adjustments: Map<PrayerEvent, Int> = emptyMap(),
+        method: CalculationMethod,
+        asrJuristic: AsrJuristic,
+        highLatitudeRule: HighLatitudeRule,
+        suhurOffsetMinutes: Int,
+        adjustments: Map<PrayerEvent, Int>,
     ): PrayerDay {
         val day = PrayerEngine.computeDay(
             date = date,
@@ -85,24 +85,24 @@ object Mawaqit {
     /**
      * True bearing from the observer to the Kaaba (Qibla direction) in degrees [0, 360).
      */
-    fun qiblaDirection(from: Coordinates): Double =
+    override fun qiblaDirection(from: Coordinates): Double =
         QiblaCalculator.direction(from)
 
     /**
      * Great-circle distance from the observer to the Kaaba in kilometers.
      */
-    fun distanceToKaaba(from: Coordinates): Double =
+    override fun distanceToKaaba(from: Coordinates): Double =
         QiblaCalculator.distance(from)
 
     /**
      * Convert a Gregorian date to the Islamic (Hijri) calendar.
      */
-    fun toHijri(year: Int, month: Int, day: Int): HijriDate =
+    override fun toHijri(year: Int, month: Int, day: Int): HijriDate =
         HijriConverter.toHijri(year, month, day)
 
     /**
      * Convert a [LocalDate] to the Islamic (Hijri) calendar.
      */
-    fun toHijri(date: LocalDate): HijriDate =
+    override fun toHijri(date: LocalDate): HijriDate =
         HijriConverter.toHijri(date.year, date.monthNumber, date.dayOfMonth)
 }
