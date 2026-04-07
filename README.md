@@ -40,6 +40,8 @@ Mawaqit computes all prayer times using astronomical algorithms from Jean Meeus'
 - **Kotlin Multiplatform** — Android, iOS, JVM, JS
 - **Zero dependencies** — Only `kotlinx-datetime`
 - **Instant-based output** — Timezone-safe, no ambiguity
+- **High precision** — RA-based Equation of Time (±2 sec), iterative sun position refinement
+- **Testable** — `PrayerCalculator` interface for dependency injection and mocking
 
 ## Installation
 
@@ -126,6 +128,41 @@ val day = Mawaqit.calculate(
 | JAKIM | 20° | 18° | Malaysia |
 | KEMENAG | 20° | 18° | Indonesia |
 | DAGESTAN | 18° | 17° (+2) | Dagestan, Russia |
+| **IJTIHAD** | **18.33°** | **17.10°** | **Safety-first (Maghrib 1.20°)** |
+
+### Ijtihad Method
+
+The Ijtihad method uses slightly deeper angles than MWL, providing a built-in safety margin (~2-3 minutes) for fasting-critical times (Fajr/Maghrib). This ensures the sun has fully set before breaking fast and Fajr begins with certainty.
+
+```kotlin
+val day = Mawaqit.calculate(
+    date = today,
+    coordinates = coords,
+    method = CalculationMethod.IJTIHAD,
+)
+```
+
+### Custom Parameters
+
+Combine any base method with custom angles or adjustments:
+
+```kotlin
+// MWL angles + safety adjustments for fasting
+val params = CalculationMethod.MWL.parameters.copy(
+    adjustments = mapOf(
+        PrayerEvent.FAJR to -2,     // 2 min earlier
+        PrayerEvent.MAGHRIB to 2,   // 2 min later
+        PrayerEvent.DHUHR to 2,     // 2 min later (past zenith)
+    ),
+)
+val day = Mawaqit.calculate(date, coords, parameters = params)
+
+// Ijtihad angles with custom Maghrib
+val params = CalculationMethod.IJTIHAD.parameters.copy(
+    maghribAngle = 1.50, // even deeper angle
+)
+val day = Mawaqit.calculate(date, coords, parameters = params)
+```
 
 ## High Latitudes
 
@@ -168,6 +205,7 @@ val hijri = Mawaqit.toHijri(LocalDate(2026, 4, 6))
 ```
 io.mawaqit.lib/
 ├── Mawaqit.kt                    ← Public API (single entry point)
+├── PrayerCalculator.kt           ← Interface for testability/DI
 ├── model/
 │   ├── Coordinates.kt            ← Geographic position
 │   ├── PrayerDay.kt              ← Result: Map<PrayerEvent, Instant>
@@ -183,11 +221,11 @@ io.mawaqit.lib/
     │   ├── DeltaT.kt
     │   ├── Nutation.kt            ← IAU 1980 (63 terms)
     │   ├── Obliquity.kt           ← Capitaine 2003
-    │   ├── SunPosition.kt         ← RA, Dec, EoT
+    │   ├── SunPosition.kt         ← RA, Dec, EoT (RA-based, ±2 sec precision)
     │   ├── SolarCoordinates.kt    ← Az/El for observer
     │   └── Refraction.kt          ← Bennett's formula
     └── prayer/
-        ├── PrayerEngine.kt        ← Core computation
+        ├── PrayerEngine.kt        ← Core computation (2-pass iterative refinement)
         ├── QiblaCalculator.kt     ← Kaaba bearing/distance
         └── HijriConverter.kt      ← Gregorian → Hijri
 ```
@@ -214,6 +252,20 @@ Mawaqit is **dual-licensed**:
 | Education / academic | AGPL-3.0 | Free |
 | Open-source projects | AGPL-3.0 | Free |
 | Closed-source commercial | Commercial | Paid |
+
+## Accuracy
+
+Mawaqit uses a two-pass iterative computation: sun position is calculated at the approximate event time, then refined. Combined with RA-based Equation of Time, this achieves high precision:
+
+| Source | Typical Error |
+|--------|--------------|
+| Equation of Time (RA-based) | ±2 seconds |
+| Iterative refinement | ±5 seconds |
+| Nutation (IAU 1980, 63 terms) | ±0.01 seconds |
+| **Total algorithmic** | **±10 seconds** |
+| Atmospheric refraction (fixed model) | ±30-60 seconds |
+
+The dominant error source is atmospheric refraction, which varies with temperature and pressure. For fasting-critical times, use the **IJTIHAD** method or apply safety adjustments through `MethodParameters.adjustments`.
 
 ## References
 
