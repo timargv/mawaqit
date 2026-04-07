@@ -32,56 +32,91 @@ internal object PrayerEngine {
         suhurOffsetMinutes: Int,
         userAdjustments: Map<PrayerEvent, Int>,
     ): PrayerDay {
-        val jd = JulianDate.atNoon(date.year, date.monthNumber, date.dayOfMonth)
-        val sun = SunPosition.compute(jd)
+        val jdNoon = JulianDate.atNoon(date.year, date.monthNumber, date.dayOfMonth)
         val horizonAngle = Refraction.sunAngleAtHorizon(coords.elevation)
 
-        // Solar transit (Dhuhr) in UTC hours
-        val transit = 12.0 + (-coords.longitude / 15.0) - (sun.equationOfTime / 60.0)
+        // Helper: compute sun position and transit for a given JD
+        fun sunAt(jd: Double): SunPosition.Result = SunPosition.compute(jd)
+        fun transitFor(sun: SunPosition.Result): Double =
+            12.0 + (-coords.longitude / 15.0) - (sun.equationOfTime / 60.0)
 
-        // Hour angle for a given sun elevation
-        fun hourAngleFor(angle: Double): Double {
+        // Helper: hour angle for a given sun declination and target elevation
+        fun hourAngleFor(angle: Double, dec: Double): Double {
             val latR = coords.latitude.toRadians()
-            val decR = sun.declination.toRadians()
+            val decR = dec.toRadians()
             val cosHA = (sin((-angle).toRadians()) - sin(latR) * sin(decR)) /
                     (cos(latR) * cos(decR))
             if (cosHA > 1.0 || cosHA < -1.0) return Double.NaN
             return acos(cosHA.coerceIn(-1.0, 1.0)).toDegrees()
         }
 
-        // Asr hour angle
-        fun asrHourAngle(factor: Double): Double {
+        // Helper: Asr hour angle
+        fun asrHourAngle(factor: Double, dec: Double): Double {
             val latR = coords.latitude.toRadians()
-            val decR = sun.declination.toRadians()
+            val decR = dec.toRadians()
             val angle = atan(1.0 / (factor + tan(abs(latR - decR)))).toDegrees()
-            return hourAngleFor(-angle)
+            return hourAngleFor(-angle, dec)
         }
 
-        // Base times in UTC hours
-        val fajrHA = hourAngleFor(params.fajrAngle)
-        val sunriseHA = hourAngleFor(-horizonAngle)
-        val sunsetHA = hourAngleFor(-horizonAngle)
-        val ishaHA = if (params.ishaInterval == null) hourAngleFor(params.ishaAngle) else Double.NaN
-        val maghribHA = if (params.maghribAngle != 0.833) hourAngleFor(params.maghribAngle) else sunsetHA
+        // ── Pass 1: approximate times using noon sun position ──
+        val sunNoon = sunAt(jdNoon)
+        val transitApprox = transitFor(sunNoon)
 
-        var fajrUTC = transit - fajrHA / 15.0
-        val sunriseUTC = transit - sunriseHA / 15.0
-        val dhuhrUTC = transit + 2.0 / 60.0 // 2 min after transit
-        val asrUTC = transit + asrHourAngle(AsrJuristic.STANDARD.shadowFactor) / 15.0
-        val asrHanafiUTC = transit + asrHourAngle(AsrJuristic.HANAFI.shadowFactor) / 15.0
-        var maghribUTC = transit + maghribHA / 15.0
+        val fajrApprox = transitApprox - hourAngleFor(params.fajrAngle, sunNoon.declination) / 15.0
+        val sunriseApprox = transitApprox - hourAngleFor(-horizonAngle, sunNoon.declination) / 15.0
+        val sunsetApprox = transitApprox + hourAngleFor(-horizonAngle, sunNoon.declination) / 15.0
+        val asrApprox = transitApprox + asrHourAngle(AsrJuristic.STANDARD.shadowFactor, sunNoon.declination) / 15.0
+
+        // ── Pass 2: refine each event using sun position at approximate time ──
+        fun refineEvent(approxUTC: Double, angle: Double, isMorning: Boolean): Double {
+            if (approxUTC.isNaN()) return Double.NaN
+            val jdEvent = jdNoon - 0.5 + approxUTC / 24.0 // JD at approximate event time
+            val sunEvent = sunAt(jdEvent)
+            val transitEvent = transitFor(sunEvent)
+            val ha = hourAngleFor(angle, sunEvent.declination)
+            if (ha.isNaN()) return Double.NaN
+            return if (isMorning) transitEvent - ha / 15.0 else transitEvent + ha / 15.0
+        }
+
+        fun refineAsr(approxUTC: Double, factor: Double): Double {
+            val jdEvent = jdNoon - 0.5 + approxUTC / 24.0
+            val sunEvent = sunAt(jdEvent)
+            val transitEvent = transitFor(sunEvent)
+            return transitEvent + asrHourAngle(factor, sunEvent.declination) / 15.0
+        }
+
+        // Refined transit
+        val sunTransit = sunAt(jdNoon)
+        val transit = transitFor(sunTransit)
+
+        // Refined times
+        var fajrUTC = refineEvent(fajrApprox, params.fajrAngle, true)
+        val sunriseUTC = refineEvent(sunriseApprox, -horizonAngle, true)
+        val dhuhrUTC = transit + 2.0 / 60.0
+        val asrUTC = refineAsr(asrApprox, AsrJuristic.STANDARD.shadowFactor)
+        val asrHanafiUTC = refineAsr(asrApprox, AsrJuristic.HANAFI.shadowFactor)
+        var maghribUTC = refineEvent(sunsetApprox, -horizonAngle, false)
+
+        // Maghrib with custom angle
+        if (params.maghribAngle != 0.833) {
+            val maghribAngleApprox = transitApprox + hourAngleFor(params.maghribAngle, sunNoon.declination) / 15.0
+            maghribUTC = refineEvent(maghribAngleApprox, params.maghribAngle, false)
+        }
+
+        // Isha
         var ishaUTC = if (params.ishaInterval != null) {
             maghribUTC + params.ishaInterval / 60.0
         } else {
-            transit + ishaHA / 15.0
+            val ishaApprox = transitApprox + hourAngleFor(params.ishaAngle, sunNoon.declination) / 15.0
+            refineEvent(ishaApprox, params.ishaAngle, false)
         }
 
         // Duha: sun at 4.5° elevation after sunrise
-        val duhaHA = hourAngleFor(-4.5)
+        val duhaHA = hourAngleFor(-4.5, sunNoon.declination)
         val duhaUTC = if (!duhaHA.isNaN()) transit - duhaHA / 15.0 else sunriseUTC + 15.0 / 60.0
 
         // Asr end (Karaha): sun at 5° before sunset
-        val asrEndHA = hourAngleFor(-5.0)
+        val asrEndHA = hourAngleFor(-5.0, sunNoon.declination)
         val asrEndUTC = if (!asrEndHA.isNaN()) transit + asrEndHA / 15.0 else maghribUTC - 15.0 / 60.0
 
         // Forbidden zenith: 5 min before dhuhr
@@ -107,12 +142,12 @@ internal object PrayerEngine {
         val qiyamUTC = maghribUTC + nightDuration * 2.0 / 3.0
 
         // High latitude adjustments for Fajr/Isha
-        val nightForHighLat = sunriseUTC + 24.0 - (transit + sunsetHA / 15.0)
+        val nightForHighLat = sunriseUTC + 24.0 - maghribUTC
         if (fajrUTC.isNaN()) {
             fajrUTC = applyHighLatRule(highLatRule, sunriseUTC, nightForHighLat, params.fajrAngle, true)
         }
         if (ishaUTC.isNaN()) {
-            ishaUTC = applyHighLatRule(highLatRule, transit + sunsetHA / 15.0, nightForHighLat, params.ishaAngle, false)
+            ishaUTC = applyHighLatRule(highLatRule, maghribUTC, nightForHighLat, params.ishaAngle, false)
         }
 
         // Suhur

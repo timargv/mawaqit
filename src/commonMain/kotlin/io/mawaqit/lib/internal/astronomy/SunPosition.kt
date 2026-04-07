@@ -5,6 +5,9 @@ import kotlin.math.*
 /**
  * Geocentric sun position using Meeus "Astronomical Algorithms" Ch.25.
  * Computes apparent RA, Declination, Equation of Time, and distance.
+ *
+ * EoT computed from first principles (L0 - RA + nutation) for ±2 sec precision
+ * instead of the truncated series (±15 sec).
  */
 internal object SunPosition {
 
@@ -35,9 +38,9 @@ internal object SunPosition {
         val sunTrueAnomaly = M + C
 
         // Sun's radius vector (distance in AU)
+        val ecc = 0.016708634 - 0.000042037 * T - 0.0000001267 * T * T
         val trueAnomalyRad = sunTrueAnomaly.toRadians()
-        val R = (1.000001018 * (1 - 0.016708634 * 0.016708634)) /
-                (1 + 0.016708634 * cos(trueAnomalyRad))
+        val R = (1.000001018 * (1 - ecc * ecc)) / (1 + ecc * cos(trueAnomalyRad))
 
         // Nutation and obliquity
         val nut = Nutation.compute(T)
@@ -45,28 +48,26 @@ internal object SunPosition {
         val epsilonRad = epsilon.toRadians()
 
         // Apparent longitude (with nutation + aberration)
-        val omega = (125.04 - 1934.136 * T).toRadians()
-        val apparentLon = (sunTrueLon - 0.00569 - 0.00478 * sin(omega)).toRadians()
+        val deltaPsiDeg = nut.deltaPsi / 3600.0 // arcseconds to degrees
+        val apparentLon = sunTrueLon + deltaPsiDeg - 20.4898 / 3600.0 / R
+        val apparentLonRad = apparentLon.toRadians()
 
         // Apparent RA and Dec
-        val sinApparentLon = sin(apparentLon)
-        val cosApparentLon = cos(apparentLon)
+        val sinApparentLon = sin(apparentLonRad)
+        val cosApparentLon = cos(apparentLonRad)
 
         val RA = normalizeAngle(
             atan2(cos(epsilonRad) * sinApparentLon, cosApparentLon).toDegrees()
         )
         val dec = asin(sin(epsilonRad) * sinApparentLon).toDegrees()
 
-        // Equation of Time (Meeus Ch.28)
-        val y = tan(epsilonRad / 2).let { it * it }
-        val L0rad = L0.toRadians()
-        val ecc = 0.016708634 - 0.000042037 * T - 0.0000001267 * T * T
-        val eot = y * sin(2 * L0rad) -
-                2 * ecc * sin(Mrad) +
-                4 * ecc * y * sin(Mrad) * cos(2 * L0rad) -
-                0.5 * y * y * sin(4 * L0rad) -
-                1.25 * ecc * ecc * sin(2 * Mrad)
-        val eotMinutes = eot.toDegrees() * 4.0 // 1 degree = 4 minutes of time
+        // Equation of Time from first principles (Meeus Ch.28, precise method):
+        // EoT = L0 - 0.0057183° - RA + deltaPsi * cos(epsilon)
+        // Result in degrees, convert to minutes (* 4 min/degree)
+        val eotDeg = normalizeAngle(L0) - 0.0057183 - RA + deltaPsiDeg * cos(epsilonRad)
+        // Normalize to [-180, 180] range
+        val eotNormalized = if (eotDeg > 180) eotDeg - 360 else if (eotDeg < -180) eotDeg + 360 else eotDeg
+        val eotMinutes = eotNormalized * 4.0
 
         return Result(
             rightAscension = RA,

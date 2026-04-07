@@ -67,6 +67,13 @@ enum class CalculationMethod(val displayName: String) {
     /** Муфтият Республики Дагестан. */
     DAGESTAN("Дагестан"),
 
+    /**
+     * Иджтихад — метод с запасом безопасности для поста.
+     * Углы MWL + ~0.33° предосторожность на горизонтные события.
+     * Магриб наступает на ~2-3 мин позже стандарта, Фаджр на ~2-3 мин раньше.
+     */
+    IJTIHAD("Иджтихад"),
+
     /** Custom parameters — use [Mawaqit.calculate] with explicit [MethodParameters]. */
     OTHER("Custom");
 
@@ -108,6 +115,11 @@ enum class CalculationMethod(val displayName: String) {
         DAGESTAN -> MethodParameters(
             fajrAngle = 18.0, ishaAngle = 17.0,
             adjustments = mapOf(PrayerEvent.FAJR to -3, PrayerEvent.ISHA to 2),
+        )
+        IJTIHAD -> MethodParameters(
+            fajrAngle = 18.33,
+            ishaAngle = 17.10,
+            maghribAngle = 1.20,
         )
         OTHER -> MethodParameters(fajrAngle = 18.0, ishaAngle = 17.0)
     }
